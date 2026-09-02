@@ -17,28 +17,20 @@ const maskEmail = (em) => {
   return `${local.substring(0, 2)}***@${domain}`;
 };
 
-// Custom DNS lookup function forcing IPv4 via dns.resolve4 A record query
-const ipv4Lookup = (hostname, options, callback) => {
-  if (typeof options === 'function') {
-    callback = options;
-    options = {};
-  }
-  dns.resolve4(hostname, (err, addresses) => {
-    if (!err && addresses && addresses.length > 0) {
-      const ip = addresses[0];
-      if (options && options.all) {
-        return callback(null, [{ address: ip, family: 4 }]);
-      }
-      return callback(null, ip, 4);
-    }
-    return dns.lookup(hostname, { family: 4 }, callback);
-  });
+const withTimeout = (promise, ms, label) => {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms)
+    )
+  ]);
 };
 
 /**
  * Creates and verifies Nodemailer transporter instance.
  */
 const createTransporter = async () => {
+  console.log('[SMTP DEBUG 2] Creating transporter');
   const emailUser = process.env.EMAIL_USER;
   const emailPass = process.env.EMAIL_PASSWORD;
 
@@ -47,38 +39,60 @@ const createTransporter = async () => {
     return { transporter: null, reason: 'unconfigured' };
   }
 
-  const host = process.env.EMAIL_HOST || 'smtp.gmail.com';
-  const port = parseInt(process.env.EMAIL_PORT || '587', 10);
-  const secure = port === 465;
+  const rawHost = process.env.EMAIL_HOST || 'smtp.gmail.com';
   const cleanUser = emailUser.trim();
   const cleanPass = emailPass.replace(/\s+/g, '');
   const fromAddress = process.env.EMAIL_FROM || `"Festora Events" <${cleanUser}>`;
 
+  let targetHost = rawHost;
+  if (rawHost === 'smtp.gmail.com') {
+    try {
+      const ips = await dns.promises.resolve4('smtp.gmail.com');
+      if (ips && ips.length > 0) {
+        targetHost = ips[0];
+        console.log(`[SMTP DNS] Pre-resolved smtp.gmail.com to IPv4: ${targetHost}`);
+      }
+    } catch (dnsErr) {
+      console.warn('[SMTP DNS] resolve4 fallback to raw host:', dnsErr.message);
+    }
+  }
+
   const transportOpts = {
-    host,
-    port,
-    secure,
-    requireTLS: !secure,
-    lookup: ipv4Lookup,
-    family: 4,
+    host: targetHost,
+    port: 587,
+    secure: false,
+    requireTLS: true,
+    connectionTimeout: 8000,
+    greetingTimeout: 8000,
+    socketTimeout: 8000,
     auth: {
       user: cleanUser,
       pass: cleanPass
     },
     tls: {
+      servername: 'smtp.gmail.com',
       rejectUnauthorized: false
     }
   };
 
+  console.log('[SMTP DEBUG 3] Transporter created');
   const transporter = nodemailer.createTransport(transportOpts);
 
   try {
-    await transporter.verify();
-    console.log(`[SMTP VERIFY SUCCESS] Host: ${host}:${port} (IPv4 ${secure ? 'SSL' : 'STARTTLS'}), User: ${maskEmail(cleanUser)}`);
+    console.log('[SMTP DEBUG 4] Starting transporter.verify');
+    await withTimeout(transporter.verify(), 8000, 'transporter.verify');
+    console.log('[SMTP DEBUG 5] transporter.verify completed');
+    console.log(`[SMTP VERIFY SUCCESS] Host: ${targetHost}:587 (IPv4 STARTTLS), User: ${maskEmail(cleanUser)}`);
     return { transporter, fromAddress, user: cleanUser };
   } catch (error) {
-    console.error(`[SMTP VERIFY FAIL] Host: ${host}:${port} (IPv4 ${secure ? 'SSL' : 'STARTTLS'}), User: ${maskEmail(cleanUser)}, Error: ${error.message}, Code: ${error.code || 'UNKNOWN'}`);
-    return { transporter: null, error: error.message, code: error.code };
+    console.error(`[SMTP VERIFY FAIL] Host: ${targetHost}:587, User: ${maskEmail(cleanUser)}, Error: ${error.message}, Code: ${error.code || 'UNKNOWN'}, Command: ${error.command || 'N/A'}, ResponseCode: ${error.responseCode || 'N/A'}`);
+    return {
+      transporter: null,
+      error: error.message,
+      code: error.code,
+      command: error.command,
+      responseCode: error.responseCode
+    };
   }
 };
 
@@ -223,13 +237,17 @@ const sendPasswordResetEmail = async ({ toEmail, studentName, resetToken }) => {
  * Sends OTP email to student for account registration/verification.
  */
 const sendOtpEmail = async ({ toEmail, studentName, otp }) => {
+  console.log('[SMTP DEBUG 1] sendOtpEmail entered');
   try {
     const transportResult = await createTransporter();
     if (!transportResult.transporter) {
       return {
         sent: false,
         reason: transportResult.reason || 'smtp_verify_failed',
-        error: transportResult.error || 'SMTP server connection or authentication failed.'
+        error: transportResult.error || 'SMTP server connection or authentication failed.',
+        code: transportResult.code,
+        command: transportResult.command,
+        responseCode: transportResult.responseCode
       };
     }
 
@@ -266,12 +284,21 @@ const sendOtpEmail = async ({ toEmail, studentName, otp }) => {
       html: htmlContent
     };
 
-    const info = await transporter.sendMail(mailOptions);
+    console.log('[SMTP DEBUG 6] Starting sendMail');
+    const info = await withTimeout(transporter.sendMail(mailOptions), 10000, 'sendMail');
+    console.log('[SMTP DEBUG 7] sendMail completed');
+
     console.log('[OTP EMAIL SUCCESS] Sent to ' + maskEmail(toEmail) + ': ' + info.messageId);
     return { sent: true, messageId: info.messageId };
   } catch (error) {
     console.error('[OTP EMAIL FAIL] Error:', error.message, 'Code:', error.code || 'UNKNOWN');
-    return { sent: false, error: error.message, code: error.code };
+    return {
+      sent: false,
+      error: error.message,
+      code: error.code,
+      command: error.command,
+      responseCode: error.responseCode
+    };
   }
 };
 
