@@ -21,45 +21,33 @@ const createTransporter = async () => {
 
   const host = process.env.EMAIL_HOST || 'smtp.gmail.com';
   const port = parseInt(process.env.EMAIL_PORT || '587', 10);
-  const secure = port === 465;
   const cleanUser = emailUser.trim();
   const cleanPass = emailPass.replace(/\s+/g, '');
   const fromAddress = process.env.EMAIL_FROM || `"Festora Events" <${cleanUser}>`;
 
-  const isGmail = host.includes('gmail');
-
-  const transportOpts = isGmail
-    ? {
-        service: 'gmail',
-        auth: {
-          user: cleanUser,
-          pass: cleanPass
-        },
-        tls: {
-          rejectUnauthorized: false
-        }
-      }
-    : {
-        host,
-        port,
-        secure,
-        auth: {
-          user: cleanUser,
-          pass: cleanPass
-        },
-        tls: {
-          rejectUnauthorized: false
-        }
-      };
+  const transportOpts = {
+    host,
+    port,
+    secure: false,
+    requireTLS: true,
+    family: 4,
+    auth: {
+      user: cleanUser,
+      pass: cleanPass
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
+  };
 
   const transporter = nodemailer.createTransport(transportOpts);
 
   try {
     await transporter.verify();
-    console.log(`[SMTP VERIFY SUCCESS] Service: ${isGmail ? 'Gmail' : host + ':' + port}, User: ${maskEmail(cleanUser)}`);
+    console.log(`[SMTP VERIFY SUCCESS] Host: ${host}:${port} (IPv4 STARTTLS), User: ${maskEmail(cleanUser)}`);
     return { transporter, fromAddress, user: cleanUser };
   } catch (error) {
-    console.error(`[SMTP VERIFY FAIL] Service: ${isGmail ? 'Gmail' : host + ':' + port}, User: ${maskEmail(cleanUser)}, Error: ${error.message}, Code: ${error.code || 'UNKNOWN'}, ResponseCode: ${error.responseCode || 'N/A'}`);
+    console.error(`[SMTP VERIFY FAIL] Host: ${host}:${port} (IPv4 STARTTLS), User: ${maskEmail(cleanUser)}, Error: ${error.message}, Code: ${error.code || 'UNKNOWN'}`);
     return { transporter: null, error: error.message, code: error.code };
   }
 };
