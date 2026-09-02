@@ -9,10 +9,12 @@ const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Student Registration
 const register = async (req, res) => {
   try {
-    console.log('[OTP] register route reached');
     const { full_name, email, phone, password, college, year_of_study, department } = req.body;
 
+    console.log('[REGISTRATION] Register attempt initiated for email domain:', email ? email.split('@')[1] : 'none');
+
     if (!full_name || !email || !phone || !password || !college || !year_of_study || !department) {
+      console.warn('[REGISTRATION] Missing required fields in request');
       return res.status(400).json({
         message: 'All fields (full_name, email, phone, password, college, year_of_study, department) are required.'
       });
@@ -30,12 +32,15 @@ const register = async (req, res) => {
       });
     }
 
+    const cleanEmail = email.toLowerCase().trim();
+    console.log('[REGISTRATION] Checking existing email in database...');
     const [existingUsers] = await pool.query(
       'SELECT id FROM users WHERE email = ?',
-      [email.toLowerCase().trim()]
+      [cleanEmail]
     );
 
     if (existingUsers.length > 0) {
+      console.log('[REGISTRATION] Email already exists in database');
       return res.status(409).json({
         message: 'Email is already registered.'
       });
@@ -44,12 +49,13 @@ const register = async (req, res) => {
     const saltRounds = 10;
     const password_hash = await bcrypt.hash(password, saltRounds);
 
+    console.log('[REGISTRATION] Executing INSERT into users table...');
     const [result] = await pool.query(
       `INSERT INTO users (full_name, email, phone, password_hash, college, year_of_study, department)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         full_name.trim(),
-        email.toLowerCase().trim(),
+        cleanEmail,
         phone.trim(),
         password_hash,
         college.trim(),
@@ -59,38 +65,40 @@ const register = async (req, res) => {
     );
 
     const newUserId = result.insertId;
+    console.log('[REGISTRATION] User record inserted successfully, ID:', newUserId);
 
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
+    console.log('[REGISTRATION] Updating reset token for OTP verification...');
     await pool.query(
       'UPDATE users SET reset_token_hash = ?, reset_token_expires_at = ? WHERE id = ?',
       [otp, expiresAt, newUserId]
     );
 
-    console.log('[OTP] sendMail calling...');
+    console.log('[REGISTRATION] Dispatching OTP email...');
     const emailRes = await sendOtpEmail({
-      toEmail: email.toLowerCase().trim(),
+      toEmail: cleanEmail,
       studentName: full_name.trim(),
       otp: otp
     });
 
     if (!emailRes.sent) {
-      console.error('[OTP] Registration email delivery failed:', emailRes.error || emailRes.reason);
+      console.error('[REGISTRATION] OTP email delivery failed:', emailRes.error || emailRes.reason);
       return res.status(500).json({
         message: 'Failed to send OTP verification email. Please try again.'
       });
     }
 
-    console.log('[OTP] sendMail succeeded for register');
+    console.log('[REGISTRATION] Registration flow completed successfully for user ID:', newUserId);
 
     return res.status(201).json({
       message: 'Student registered successfully. Verification code sent to email.',
       user: {
         id: newUserId,
         full_name: full_name.trim(),
-        email: email.toLowerCase().trim(),
+        email: cleanEmail,
         phone: phone.trim(),
         college: college.trim(),
         year_of_study: year_of_study.trim(),
@@ -99,7 +107,7 @@ const register = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Registration Error:', error);
+    console.error('[REGISTRATION ERROR] Code:', error.code, 'Errno:', error.errno, 'SqlState:', error.sqlState, 'Message:', error.message);
     return res.status(500).json({
       message: 'Server error during registration. Please try again later.'
     });

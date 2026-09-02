@@ -25,7 +25,8 @@ const allowedOrigins = [
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:3000',
-  'http://127.0.0.1:3000'
+  'http://127.0.0.1:3000',
+  'https://festora-frontend.onrender.com'
 ];
 
 app.use(cors({
@@ -62,7 +63,7 @@ app.get('/api/health', async (req, res) => {
     return res.status(500).json({
       backend: "running",
       database: "disconnected",
-      details: "MySQL connection failed. Please verify credentials in .env and ensure MySQL server is running and database 'festora' exists."
+      details: dbStatus.error || "MySQL connection failed. Please verify credentials in .env and ensure MySQL server is running and database 'festora' exists."
     });
   }
 });
