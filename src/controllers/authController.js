@@ -85,18 +85,17 @@ const register = async (req, res) => {
     });
 
     if (!emailRes.sent) {
-      console.error('[REGISTRATION] OTP email delivery notice:', emailRes.error || emailRes.reason);
-      return res.status(201).json({
-        message: 'Student registered successfully. Verification code sent to email.',
-        user: {
-          id: newUserId,
-          full_name: full_name.trim(),
-          email: cleanEmail,
-          phone: phone.trim(),
-          college: college.trim(),
-          year_of_study: year_of_study.trim(),
-          department: department.trim()
-        }
+      console.error('[REGISTRATION] OTP email delivery failed:', emailRes.error || emailRes.reason);
+      const isUnconfigured = emailRes.reason === 'unconfigured';
+      const errorMsg = isUnconfigured
+        ? 'Failed to send OTP verification email. Server SMTP credentials (EMAIL_USER / EMAIL_PASSWORD) are not configured.'
+        : `Failed to send OTP verification email. ${emailRes.error || 'Please check SMTP settings.'}`;
+
+      return res.status(500).json({
+        message: errorMsg,
+        db_user_created: true,
+        email_sent: false,
+        error_code: emailRes.code || (isUnconfigured ? 'SMTP_UNCONFIGURED' : 'EMAIL_DISPATCH_FAILED')
       });
     }
 

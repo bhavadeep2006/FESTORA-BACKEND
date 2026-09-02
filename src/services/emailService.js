@@ -1,20 +1,69 @@
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
 
+const maskEmail = (em) => {
+  if (!em || typeof em !== 'string' || !em.includes('@')) return 'UNCONFIGURED';
+  const [local, domain] = em.split('@');
+  return `${local.substring(0, 2)}***@${domain}`;
+};
+
+/**
+ * Creates and verifies Nodemailer transporter instance.
+ */
+const createTransporter = async () => {
+  const emailUser = process.env.EMAIL_USER;
+  const emailPass = process.env.EMAIL_PASSWORD;
+
+  if (!emailUser || !emailPass) {
+    console.log('[SMTP NOTICE] EMAIL_USER or EMAIL_PASSWORD is not set in process.env.');
+    return { transporter: null, reason: 'unconfigured' };
+  }
+
+  const host = process.env.EMAIL_HOST || 'smtp.gmail.com';
+  const port = parseInt(process.env.EMAIL_PORT || '587', 10);
+  const secure = port === 465;
+  const cleanUser = emailUser.trim();
+  const cleanPass = emailPass.replace(/\s+/g, '');
+  const fromAddress = process.env.EMAIL_FROM || `"Festora Events" <${cleanUser}>`;
+
+  const transporter = nodemailer.createTransport({
+    host,
+    port,
+    secure,
+    auth: {
+      user: cleanUser,
+      pass: cleanPass
+    },
+    tls: {
+      rejectUnauthorized: false
+    }
+  });
+
+  try {
+    await transporter.verify();
+    console.log(`[SMTP VERIFY SUCCESS] Host: ${host}, Port: ${port}, Secure: ${secure}, User: ${maskEmail(cleanUser)}`);
+    return { transporter, fromAddress, user: cleanUser };
+  } catch (error) {
+    console.error(`[SMTP VERIFY FAIL] Host: ${host}, Port: ${port}, Secure: ${secure}, User: ${maskEmail(cleanUser)}, Error: ${error.message}, Code: ${error.code || 'UNKNOWN'}`);
+    return { transporter: null, error: error.message, code: error.code };
+  }
+};
+
 /**
  * Sends event ticket confirmation email to student with embedded QR code.
  */
 const sendTicketEmail = async ({ toEmail, studentName, eventTitle, eventDate, venue, ticketCode, qrToken }) => {
   try {
     console.log('[TICKET EMAIL] email function called');
-    console.log('[TICKET EMAIL] recipient present:', toEmail ? 'YES' : 'NO');
-    const emailUser = process.env.EMAIL_USER;
-    const emailPass = process.env.EMAIL_PASSWORD;
+    console.log('[TICKET EMAIL] recipient:', maskEmail(toEmail));
 
-    if (!emailUser || !emailPass) {
-      console.log('[TICKET EMAIL] Email service notice: SMTP credentials not set in .env.');
-      return { sent: false, reason: 'unconfigured' };
+    const transportResult = await createTransporter();
+    if (!transportResult.transporter) {
+      console.log('[TICKET EMAIL] Email service notice: SMTP verification failed or unconfigured.');
+      return { sent: false, reason: transportResult.reason || 'smtp_verify_failed', error: transportResult.error };
     }
+
+    const { transporter, fromAddress } = transportResult;
 
     // Generate QR Code Buffer
     const qrBuffer = await QRCode.toBuffer(qrToken, {
@@ -23,18 +72,6 @@ const sendTicketEmail = async ({ toEmail, studentName, eventTitle, eventDate, ve
       color: {
         dark: '#1e293b',
         light: '#ffffff'
-      }
-    });
-
-    console.log('[TICKET EMAIL] QR generated:', qrBuffer ? 'YES' : 'NO');
-
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587', 10),
-      secure: parseInt(process.env.EMAIL_PORT || '587', 10) === 465,
-      auth: {
-        user: emailUser,
-        pass: emailPass
       }
     });
 
@@ -68,20 +105,8 @@ const sendTicketEmail = async ({ toEmail, studentName, eventTitle, eventDate, ve
       </div>
     `;
 
-    const maskEmail = (em) => {
-      if (!em || !em.includes('@')) return 'INVALID';
-      const [local, domain] = em.split('@');
-      return `${local.substring(0, 2)}***@${domain}`;
-    };
-
-    console.log('[TICKET EMAIL DEBUG]');
-    console.log('student email:', maskEmail(toEmail));
-    console.log('email recipient:', maskEmail(toEmail));
-    console.log('EMAIL_USER:', maskEmail(emailUser));
-    console.log('recipient equals EMAIL_USER:', (toEmail && emailUser && toEmail.toLowerCase() === emailUser.toLowerCase()) ? 'YES' : 'NO');
-
     const mailOptions = {
-      from: process.env.EMAIL_FROM || '"Festora Events" <fesoraadmin@gmail.com>',
+      from: fromAddress,
       to: toEmail,
       subject: `[Festora Ticket] Confirmed for ${eventTitle} (${ticketCode})`,
       html: htmlContent,
@@ -94,17 +119,12 @@ const sendTicketEmail = async ({ toEmail, studentName, eventTitle, eventDate, ve
       ]
     };
 
-    console.log('[TICKET EMAIL] sendMail started');
     const info = await transporter.sendMail(mailOptions);
-    console.log('[TICKET EMAIL] sendMail completed');
-    console.log('sendMail accepted:', info.accepted && info.accepted.length > 0 ? 'YES' : 'NO');
-    console.log('sendMail rejected:', info.rejected && info.rejected.length > 0 ? 'YES' : 'NO');
-    console.log('messageId:', info.messageId ? 'PRESENT' : 'ABSENT');
-
+    console.log('[TICKET EMAIL SUCCESS] Sent to ' + maskEmail(toEmail) + ': ' + info.messageId);
     return { sent: true, messageId: info.messageId };
 
   } catch (error) {
-    console.error('[TICKET EMAIL] sendMail failed:', error.message);
+    console.error('[TICKET EMAIL FAIL] sendMail failed:', error.message);
     return { sent: false, error: error.message };
   }
 };
@@ -114,26 +134,16 @@ const sendTicketEmail = async ({ toEmail, studentName, eventTitle, eventDate, ve
  */
 const sendPasswordResetEmail = async ({ toEmail, studentName, resetToken }) => {
   try {
-    const emailUser = process.env.EMAIL_USER;
-    const emailPass = process.env.EMAIL_PASSWORD;
-
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
     const resetUrl = `${frontendUrl}/reset-password?token=${resetToken}`;
 
-    if (!emailUser || !emailPass) {
-      console.log(`Email service notice: SMTP credentials not set in .env. Password reset link for ${toEmail}: ${resetUrl}`);
-      return { sent: false, reason: 'unconfigured', resetUrl };
+    const transportResult = await createTransporter();
+    if (!transportResult.transporter) {
+      console.log(`[RESET EMAIL] SMTP unconfigured or failed. Password reset link for ${maskEmail(toEmail)}: ${resetUrl}`);
+      return { sent: false, reason: transportResult.reason || 'smtp_verify_failed', resetUrl, error: transportResult.error };
     }
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587', 10),
-      secure: parseInt(process.env.EMAIL_PORT || '587', 10) === 465,
-      auth: {
-        user: emailUser,
-        pass: emailPass
-      }
-    });
+    const { transporter, fromAddress } = transportResult;
 
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px; background-color: #ffffff;">
@@ -160,50 +170,37 @@ const sendPasswordResetEmail = async ({ toEmail, studentName, resetToken }) => {
     `;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || '"Festora Events" <no-reply@festora.com>',
+      from: fromAddress,
       to: toEmail,
       subject: '[Festora] Password Reset Request',
       html: htmlContent
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`Password reset email sent successfully to ${toEmail}: ${info.messageId}`);
+    console.log(`[RESET EMAIL SUCCESS] Password reset email sent to ${maskEmail(toEmail)}: ${info.messageId}`);
     return { sent: true, messageId: info.messageId };
 
   } catch (error) {
-    console.error('Password reset email error (non-fatal):', error.message);
+    console.error('[RESET EMAIL FAIL] Error:', error.message);
     return { sent: false, error: error.message };
   }
 };
-
 
 /**
  * Sends OTP email to student for account registration/verification.
  */
 const sendOtpEmail = async ({ toEmail, studentName, otp }) => {
   try {
-    const emailUser = process.env.EMAIL_USER;
-    const emailPass = process.env.EMAIL_PASSWORD;
-
-    if (!emailUser || !emailPass) {
-      console.log('[OTP] Email service notice: SMTP credentials not set in .env.');
-      return { sent: false, reason: 'unconfigured' };
+    const transportResult = await createTransporter();
+    if (!transportResult.transporter) {
+      return {
+        sent: false,
+        reason: transportResult.reason || 'smtp_verify_failed',
+        error: transportResult.error || 'SMTP server connection or authentication failed.'
+      };
     }
 
-    const cleanPass = emailPass.replace(/\s+/g, '');
-
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587', 10),
-      secure: parseInt(process.env.EMAIL_PORT || '587', 10) === 465,
-      auth: {
-        user: emailUser.trim(),
-        pass: cleanPass
-      },
-      tls: {
-        rejectUnauthorized: false
-      }
-    });
+    const { transporter, fromAddress } = transportResult;
 
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e2e8f0; border-radius: 10px; background-color: #ffffff;">
@@ -230,18 +227,18 @@ const sendOtpEmail = async ({ toEmail, studentName, otp }) => {
     `;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || '"Festora Events" <no-reply@festora.com>',
+      from: fromAddress,
       to: toEmail,
       subject: '[Festora] Your Email Verification Code',
       html: htmlContent
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log('[OTP] sendMail succeeded to ' + toEmail + ': ' + info.messageId);
+    console.log('[OTP EMAIL SUCCESS] Sent to ' + maskEmail(toEmail) + ': ' + info.messageId);
     return { sent: true, messageId: info.messageId };
   } catch (error) {
-    console.error('[OTP] sendMail failed:', error.message);
-    return { sent: false, error: error.message };
+    console.error('[OTP EMAIL FAIL] Error:', error.message, 'Code:', error.code || 'UNKNOWN');
+    return { sent: false, error: error.message, code: error.code };
   }
 };
 
@@ -250,25 +247,14 @@ const sendOtpEmail = async ({ toEmail, studentName, otp }) => {
  */
 const sendHostRequestNotificationEmail = async (hostRequestData) => {
   try {
-    const emailUser = process.env.EMAIL_USER;
-    const emailPass = process.env.EMAIL_PASSWORD;
-
-    const organizerEmail = process.env.FESTORA_ORGANIZER_EMAIL || process.env.ORGANIZER_EMAIL || emailUser || 'organizer@festora.demo';
-
-    if (!emailUser || !emailPass) {
-      console.log(`[HOST REQUEST EMAIL] Email notice: SMTP credentials not set in .env. Notification for request #${hostRequestData.id} logged.`);
-      return { sent: false, reason: 'unconfigured' };
+    const transportResult = await createTransporter();
+    if (!transportResult.transporter) {
+      console.log(`[HOST REQUEST EMAIL] SMTP unconfigured or failed. Notification for request #${hostRequestData.id} logged.`);
+      return { sent: false, reason: transportResult.reason || 'smtp_verify_failed', error: transportResult.error };
     }
 
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT || '587', 10),
-      secure: parseInt(process.env.EMAIL_PORT || '587', 10) === 465,
-      auth: {
-        user: emailUser,
-        pass: emailPass
-      }
-    });
+    const { transporter, fromAddress, user } = transportResult;
+    const organizerEmail = process.env.FESTORA_ORGANIZER_EMAIL || process.env.ORGANIZER_EMAIL || user || 'organizer@festora.demo';
 
     const submittedDate = hostRequestData.created_at
       ? new Date(hostRequestData.created_at).toLocaleString()
@@ -323,17 +309,17 @@ const sendHostRequestNotificationEmail = async (hostRequestData) => {
     `;
 
     const mailOptions = {
-      from: process.env.EMAIL_FROM || '"Festora Platform" <no-reply@festora.com>',
+      from: fromAddress,
       to: organizerEmail,
       subject: 'New Event Hosting Request — FESTORA',
       html: htmlContent
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`[HOST REQUEST EMAIL] Sent to ${organizerEmail}: ${info.messageId}`);
+    console.log(`[HOST REQUEST EMAIL SUCCESS] Sent to ${maskEmail(organizerEmail)}: ${info.messageId}`);
     return { sent: true, messageId: info.messageId };
   } catch (error) {
-    console.error('[HOST REQUEST EMAIL] Failed to send email (non-fatal):', error.message);
+    console.error('[HOST REQUEST EMAIL FAIL] Failed to send email:', error.message);
     return { sent: false, error: error.message };
   }
 };
