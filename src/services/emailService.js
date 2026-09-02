@@ -17,9 +17,22 @@ const maskEmail = (em) => {
   return `${local.substring(0, 2)}***@${domain}`;
 };
 
-// Custom DNS lookup function forcing IPv4 family (family: 4)
+// Custom DNS lookup function forcing IPv4 via dns.resolve4 A record query
 const ipv4Lookup = (hostname, options, callback) => {
-  return dns.lookup(hostname, { family: 4, all: false }, callback);
+  if (typeof options === 'function') {
+    callback = options;
+    options = {};
+  }
+  dns.resolve4(hostname, (err, addresses) => {
+    if (!err && addresses && addresses.length > 0) {
+      const ip = addresses[0];
+      if (options && options.all) {
+        return callback(null, [{ address: ip, family: 4 }]);
+      }
+      return callback(null, ip, 4);
+    }
+    return dns.lookup(hostname, { family: 4 }, callback);
+  });
 };
 
 /**
