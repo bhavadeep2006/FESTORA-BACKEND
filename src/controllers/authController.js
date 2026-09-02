@@ -404,11 +404,21 @@ const resetPassword = async (req, res) => {
   }
 };
 
+const getFrontendUrl = (req) => {
+  if (process.env.FRONTEND_URL && !process.env.FRONTEND_URL.includes('localhost')) {
+    return process.env.FRONTEND_URL.replace(/\/$/, '');
+  }
+  if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+    return 'https://festora-frontend.onrender.com';
+  }
+  return process.env.FRONTEND_URL || 'http://localhost:5173';
+};
+
 const googleAuth = (req, res, next) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const frontendUrl = getFrontendUrl(req);
   if (!clientId || !clientSecret) {
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
     return res.redirect(`${frontendUrl}/signin?error=google_not_configured`);
   }
   const passport = require('../config/passport');
@@ -418,7 +428,7 @@ const googleAuth = (req, res, next) => {
 const googleCallback = async (req, res, next) => {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+  const frontendUrl = getFrontendUrl(req);
 
   if (!clientId || !clientSecret) {
     return res.redirect(`${frontendUrl}/signin?error=google_not_configured`);
@@ -426,13 +436,16 @@ const googleCallback = async (req, res, next) => {
   const passport = require('../config/passport');
   passport.authenticate('google', { session: false }, async (err, user) => {
     if (err || !user) {
+      console.error('[GOOGLE OAUTH ERROR] Authentication failed or user creation error:', err);
       return res.redirect(`${frontendUrl}/signin?error=google_auth_failed`);
     }
     try {
       const tokenPayload = { id: user.id, email: user.email, role: 'student' };
       const token = jwt.sign(tokenPayload, process.env.JWT_SECRET, { expiresIn: '24h' });
+      console.log('[GOOGLE OAUTH SUCCESS] User ID:', user.id, 'redirecting to:', `${frontendUrl}/auth-success`);
       return res.redirect(`${frontendUrl}/auth-success?token=${token}`);
     } catch (tokenErr) {
+      console.error('[GOOGLE OAUTH TOKEN ERROR]:', tokenErr);
       return res.redirect(`${frontendUrl}/signin?error=token_error`);
     }
   })(req, res, next);

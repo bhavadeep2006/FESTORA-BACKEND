@@ -6,7 +6,17 @@ const { pool } = require('./db');
 
 const clientId = process.env.GOOGLE_CLIENT_ID;
 const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-const callbackURL = process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback';
+const getCallbackURL = () => {
+  if (process.env.GOOGLE_CALLBACK_URL && !process.env.GOOGLE_CALLBACK_URL.includes('localhost')) {
+    return process.env.GOOGLE_CALLBACK_URL;
+  }
+  if (process.env.NODE_ENV === 'production' || process.env.RENDER) {
+    return 'https://festora-backend.onrender.com/api/auth/google/callback';
+  }
+  return process.env.GOOGLE_CALLBACK_URL || 'http://localhost:5000/api/auth/google/callback';
+};
+
+const callbackURL = getCallbackURL();
 
 if (clientId && clientSecret) {
   passport.use(
