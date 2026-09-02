@@ -49,6 +49,7 @@ const createTransporter = async () => {
 
   const host = process.env.EMAIL_HOST || 'smtp.gmail.com';
   const port = parseInt(process.env.EMAIL_PORT || '587', 10);
+  const secure = port === 465;
   const cleanUser = emailUser.trim();
   const cleanPass = emailPass.replace(/\s+/g, '');
   const fromAddress = process.env.EMAIL_FROM || `"Festora Events" <${cleanUser}>`;
@@ -56,8 +57,8 @@ const createTransporter = async () => {
   const transportOpts = {
     host,
     port,
-    secure: false,
-    requireTLS: true,
+    secure,
+    requireTLS: !secure,
     lookup: ipv4Lookup,
     family: 4,
     auth: {
@@ -73,10 +74,10 @@ const createTransporter = async () => {
 
   try {
     await transporter.verify();
-    console.log(`[SMTP VERIFY SUCCESS] Host: ${host}:${port} (IPv4 STARTTLS), User: ${maskEmail(cleanUser)}`);
+    console.log(`[SMTP VERIFY SUCCESS] Host: ${host}:${port} (IPv4 ${secure ? 'SSL' : 'STARTTLS'}), User: ${maskEmail(cleanUser)}`);
     return { transporter, fromAddress, user: cleanUser };
   } catch (error) {
-    console.error(`[SMTP VERIFY FAIL] Host: ${host}:${port} (IPv4 STARTTLS), User: ${maskEmail(cleanUser)}, Error: ${error.message}, Code: ${error.code || 'UNKNOWN'}`);
+    console.error(`[SMTP VERIFY FAIL] Host: ${host}:${port} (IPv4 ${secure ? 'SSL' : 'STARTTLS'}), User: ${maskEmail(cleanUser)}, Error: ${error.message}, Code: ${error.code || 'UNKNOWN'}`);
     return { transporter: null, error: error.message, code: error.code };
   }
 };
