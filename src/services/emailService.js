@@ -40,6 +40,9 @@ const createTransporter = async () => {
   }
 
   const rawHost = process.env.EMAIL_HOST || 'smtp.gmail.com';
+  const rawPort = parseInt(process.env.EMAIL_PORT || '465', 10);
+  const usePort = rawPort === 587 ? 465 : rawPort; // Prefer port 465 SSL on Render
+  const secure = usePort === 465;
   const cleanUser = emailUser.trim();
   const cleanPass = emailPass.replace(/\s+/g, '');
   const fromAddress = process.env.EMAIL_FROM || `"Festora Events" <${cleanUser}>`;
@@ -59,9 +62,9 @@ const createTransporter = async () => {
 
   const transportOpts = {
     host: targetHost,
-    port: 587,
-    secure: false,
-    requireTLS: true,
+    port: usePort,
+    secure: secure,
+    requireTLS: !secure,
     connectionTimeout: 8000,
     greetingTimeout: 8000,
     socketTimeout: 8000,
