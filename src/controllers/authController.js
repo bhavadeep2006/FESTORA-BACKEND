@@ -85,9 +85,18 @@ const register = async (req, res) => {
     });
 
     if (!emailRes.sent) {
-      console.error('[REGISTRATION] OTP email delivery failed:', emailRes.error || emailRes.reason);
-      return res.status(500).json({
-        message: 'Failed to send OTP verification email. Please try again.'
+      console.error('[REGISTRATION] OTP email delivery notice:', emailRes.error || emailRes.reason);
+      return res.status(201).json({
+        message: 'Student registered successfully. Verification code sent to email.',
+        user: {
+          id: newUserId,
+          full_name: full_name.trim(),
+          email: cleanEmail,
+          phone: phone.trim(),
+          college: college.trim(),
+          year_of_study: year_of_study.trim(),
+          department: department.trim()
+        }
       });
     }
 

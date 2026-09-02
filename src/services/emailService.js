@@ -190,13 +190,18 @@ const sendOtpEmail = async ({ toEmail, studentName, otp }) => {
       return { sent: false, reason: 'unconfigured' };
     }
 
+    const cleanPass = emailPass.replace(/\s+/g, '');
+
     const transporter = nodemailer.createTransport({
       host: process.env.EMAIL_HOST || 'smtp.gmail.com',
       port: parseInt(process.env.EMAIL_PORT || '587', 10),
       secure: parseInt(process.env.EMAIL_PORT || '587', 10) === 465,
       auth: {
-        user: emailUser,
-        pass: emailPass
+        user: emailUser.trim(),
+        pass: cleanPass
+      },
+      tls: {
+        rejectUnauthorized: false
       }
     });
 
