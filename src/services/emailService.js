@@ -1,10 +1,25 @@
 const nodemailer = require('nodemailer');
 const QRCode = require('qrcode');
+const dns = require('dns');
+
+// Force Node.js DNS resolver to prioritize IPv4 over IPv6
+if (dns.setDefaultResultOrder) {
+  try {
+    dns.setDefaultResultOrder('ipv4first');
+  } catch (e) {
+    // Ignore if not supported in older Node versions
+  }
+}
 
 const maskEmail = (em) => {
   if (!em || typeof em !== 'string' || !em.includes('@')) return 'UNCONFIGURED';
   const [local, domain] = em.split('@');
   return `${local.substring(0, 2)}***@${domain}`;
+};
+
+// Custom DNS lookup function forcing IPv4 family (family: 4)
+const ipv4Lookup = (hostname, options, callback) => {
+  return dns.lookup(hostname, { family: 4, all: false }, callback);
 };
 
 /**
@@ -30,6 +45,7 @@ const createTransporter = async () => {
     port,
     secure: false,
     requireTLS: true,
+    lookup: ipv4Lookup,
     family: 4,
     auth: {
       user: cleanUser,
