@@ -295,17 +295,19 @@ const resendOtp = async (req, res) => {
       [newOtp, expiresAt, user.id]
     );
 
-    console.log('[OTP] email service called');
+    console.log('[OTP] Resend email service called...');
     const emailRes = await sendOtpEmail({
-      toEmail: user.email,
-      studentName: user.full_name,
+      toEmail: user.email.toLowerCase().trim(),
+      studentName: user.full_name.trim(),
       otp: newOtp
     });
 
     if (!emailRes.sent) {
-      console.error('[OTP] Resend email dispatch failed:', emailRes.error);
+      console.error('[OTP] Resend email dispatch failed:', emailRes.error || emailRes.reason);
       return res.status(500).json({
-        message: 'Failed to send OTP verification email.'
+        message: `Failed to send OTP verification email. ${emailRes.error || (emailRes.reason === 'unconfigured' ? 'SMTP credentials not configured on server.' : 'Please check SMTP settings.')}`,
+        email_sent: false,
+        error_code: emailRes.code || 'RESEND_EMAIL_FAILED'
       });
     }
 
