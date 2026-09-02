@@ -35,55 +35,37 @@ const register = async (req, res) => {
     const cleanEmail = email.toLowerCase().trim();
     console.log('[REGISTRATION] Checking existing email in database...');
     const [existingUsers] = await pool.query(
-      'SELECT id, is_verified FROM users WHERE email = ?',
+      'SELECT id FROM users WHERE email = ?',
       [cleanEmail]
     );
 
+    if (existingUsers.length > 0) {
+      console.log('[REGISTRATION] Email already exists in database');
+      return res.status(409).json({
+        message: 'Email is already registered.'
+      });
+    }
+
     const saltRounds = 10;
     const password_hash = await bcrypt.hash(password, saltRounds);
-    let newUserId;
 
-    if (existingUsers.length > 0) {
-      const existingUser = existingUsers[0];
-      if (existingUser.is_verified) {
-        console.log('[REGISTRATION] Email is already registered and verified');
-        return res.status(409).json({
-          message: 'Email is already registered. Please login.'
-        });
-      }
+    console.log('[REGISTRATION] Executing INSERT into users table...');
+    const [result] = await pool.query(
+      `INSERT INTO users (full_name, email, phone, password_hash, college, year_of_study, department)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        full_name.trim(),
+        cleanEmail,
+        phone.trim(),
+        password_hash,
+        college.trim(),
+        year_of_study.trim(),
+        department.trim()
+      ]
+    );
 
-      console.log('[REGISTRATION] Pending unverified user found ID:', existingUser.id, 'updating details...');
-      await pool.query(
-        `UPDATE users SET full_name = ?, phone = ?, password_hash = ?, college = ?, year_of_study = ?, department = ? WHERE id = ?`,
-        [
-          full_name.trim(),
-          phone.trim(),
-          password_hash,
-          college.trim(),
-          year_of_study.trim(),
-          department.trim(),
-          existingUser.id
-        ]
-      );
-      newUserId = existingUser.id;
-    } else {
-      console.log('[REGISTRATION] Executing INSERT into users table...');
-      const [result] = await pool.query(
-        `INSERT INTO users (full_name, email, phone, password_hash, college, year_of_study, department)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [
-          full_name.trim(),
-          cleanEmail,
-          phone.trim(),
-          password_hash,
-          college.trim(),
-          year_of_study.trim(),
-          department.trim()
-        ]
-      );
-      newUserId = result.insertId;
-      console.log('[REGISTRATION] User record inserted successfully, ID:', newUserId);
-    }
+    const newUserId = result.insertId;
+    console.log('[REGISTRATION] User record inserted successfully, ID:', newUserId);
 
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
